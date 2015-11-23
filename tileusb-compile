@@ -1,0 +1,85 @@
+#!/bin/bash
+#
+# Copyright 2014 Tilera Corporation. All Rights Reserved.
+#
+# Attempt to compile a kernel module for the currently running kernel.
+#
+
+# Figure out the SDK path and driver version.
+path="`echo $0 | sed 's,//*,/,g'`"
+base_dir=`echo $path | sed 's,/tileusb-compile,,'`
+kernel=`uname -r`
+machine=`uname -m`
+module=tileusb
+
+# For CentOS 5 and before the kernel version did not include the
+# architecture, so we tagged the directory with it explicitly.
+case ${kernel} in
+*${machine}) subdir=${kernel} ;;
+*) subdir=${kernel}-${machine} ;;
+esac
+
+module_dir=${base_dir}/${subdir}
+module_file=${module_dir}/${module}.ko
+if [ -f ${module_file} ]
+then
+	echo "Kernel module ${module_file} already exists." 1>&2
+	echo "To rebuild it, delete the file and try again." 1>&2
+	exit 127
+fi
+
+# Parse command line options.
+license=gpl
+while true ; do
+    case $1 in
+	--gpl-license)
+	    license=gpl; shift ;;
+	--tilera-license)
+	    license=tilera; shift ;;
+	*)
+	    break ;;
+    esac
+done
+
+# Check for kernel source.
+kernel_source=/lib/modules/$kernel/build
+if [ ! -d ${kernel_source} ]; then
+    echo "Could not find kernel source in ${kernel_source}." 1>&2
+    echo "Install the kernel-devel or kernel-smp-devel package and try again." 1>&2
+    exit 127
+fi
+
+# Check compiler version.
+kernel_gcc_ver=`sed 's/.*gcc version \([^ )]*\).*/\1/' /proc/version`
+path_gcc_ver=`gcc -dumpversion`
+usr_bin_gcc_ver=`/usr/bin/gcc -dumpversion`
+extra_make_flags=
+if [[ "${kernel_gcc_ver}" != ${path_gcc_ver}* ]]; then
+    echo "GCC version mismatch; kernel needs ${kernel_gcc_ver}, path provides ${path_gcc_ver}."
+    if [[ "${kernel_gcc_ver}" = ${usr_bin_gcc_ver}* ]]; then 
+	echo "Attempting to build with CC=/usr/bin/gcc."
+	extra_make_flags='CC=/usr/bin/gcc'
+    else
+	echo "Please modify PATH to include gcc version ${kernel_gcc_ver}" 1>&2
+	exit 1
+    fi
+fi
+
+# Make sure we can actually compile in this directory.
+if [ ! -w ${base_dir} ]; then
+    echo "Cannot compile; you do not have write permission for ${base_dir}" 1>&2
+    if [ "$(id -u)" = "0" ]; then
+	echo "Perhaps you need to run as a normal user instead of as root?" 1>&2
+    fi
+    exit 1
+fi
+
+echo "Compiling ${module_file}..."
+trap "echo '...Failed'" ERR
+set -e
+mkdir -p ${module_dir}
+cp -f ${base_dir}/${license}_src/usb/* ${module_dir}
+unset ARCH
+make -C ${module_dir} ${extra_make_flags}
+
+echo "Compilation successful"

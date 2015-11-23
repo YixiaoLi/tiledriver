@@ -1,0 +1,73 @@
+#!/bin/bash
+#
+# Copyright 2014 Tilera Corporation. All Rights Reserved.
+#
+# Install the tileusb driver, so it will automatically load at startup.
+#
+# This script will install the driver for the currently running kernel;
+# if the kernel changes at a later date a new install must be performed.
+#
+
+# Figure out the SDK path and driver version.
+path="`echo $0 | sed 's,//*,/,g'`"
+module_dir=`echo $path | sed 's,/tileusb-install,,'`
+kernel=`uname -r`
+machine=`uname -m`
+module=tileusb
+
+# For CentOS 5 and before the kernel version did not include the
+# architecture, so we tagged the directory with it explicitly.
+case ${kernel} in
+*${machine}) subdir=${kernel} ;;
+*) subdir=${kernel}-${machine} ;;
+esac
+
+module_file=${module_dir}/${subdir}/${module}.ko
+if [ ! -f "$module_file" ]; then
+    echo "Cannot find '$module_file'." 1>&2
+    echo "A pre-compiled kernel module is not available for your kernel." 1>&2
+    echo "Please run 'tileusb-compile' to build the driver from source." 1>&2
+    exit 127
+fi
+
+# Check to see if we're running as root.
+if [ "$(id -u)" != "0" ]; then
+   echo "This script must be run as root." 1>&2
+   exit 1
+fi
+
+# Check for an old driver installation.
+install_dir=/lib/modules/${kernel}/kernel/drivers/tile
+install_file=${install_dir}/${module}.ko
+if [ -f "$install_file" ]; then
+    echo "Found installed driver; uninstalling."
+    ${module_dir}/tileusb-uninstall
+fi
+
+# Copy the driver into kernel modules tree.
+echo "Copying files: "
+mkdir -p ${install_dir}
+cp ${module_file} ${install_file}
+
+# Run depmod so that modprobe will find the newly installed module.
+/sbin/depmod
+
+# Install our udev script.
+udev_script=/etc/udev/rules.d/tileusb.rules
+cp ${module_dir}/tileusb.rules ${udev_script}
+
+# Install our init script and get it into the various "/etc/rcN.d" dirs.
+init_script=/etc/init.d/tileusb
+cp ${module_dir}/tileusb.init ${init_script}
+#/sbin/chkconfig --add tileusb
+
+# If the module is loaded in the current kernel, then uninstall couldn't
+# remove it or we can't figure out what version it is.  Let the user know
+# they need to reboot.
+if grep -q "^${module} " /proc/modules; then
+    echo "Old driver is still loaded, please reboot to load new driver."
+    exit 0
+fi
+
+# Automatically start the driver.
+${init_script} start

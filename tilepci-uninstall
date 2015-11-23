@@ -1,0 +1,157 @@
+#!/bin/bash
+#
+# Uninstall the 'tilegxpci' or 'tilegxpci_nic' driver.
+#
+# This script will uninstall the driver for the currently running kernel.
+#
+# Copyright 2014 Tilera Corporation. All Rights Reserved.
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+
+kernel=`uname -r`
+install_dir=/lib/modules/${kernel}/kernel/drivers/tile
+
+# Check to see if we're running as root.
+if [ "$(id -u)" != "0" ]; then
+   echo "This script must be run as root." 1>&2
+   exit 1
+fi
+
+# Unload driver, if present.
+module=tilegxpci
+install_file=${install_dir}/${module}.ko
+if grep -q "^${module} " /proc/modules; then
+    echo "Unloading old driver: ${module}.ko"
+    /sbin/rmmod ${module}
+fi
+
+# Uninstall init script, if needed.
+init_script=/etc/init.d/${module}
+if [ -f "$init_script" ]; then
+    echo "Removing driver installation files: ${init_script}"
+    /sbin/chkconfig --del ${module}
+    rm -f ${init_script}
+fi
+
+#Uninstall parameter script, if needed.
+param_script=/etc/modprobe.d/${module}.conf
+if [ -f "$param_script" ]; then
+    rm -f ${param_script}
+fi
+
+# Delete the driver kernel module.
+if [ -f ${install_file} ]; then
+    rm -f ${install_file}
+fi
+
+module=tilegxpci_nic
+install_file=${install_dir}/${module}.ko
+if grep -q "^${module} " /proc/modules; then
+    echo "Unloading old driver: ${module}.ko"
+    /sbin/rmmod ${module}
+fi
+
+# Uninstall init script, if needed.
+init_script=/etc/init.d/${module}
+if [ -f "$init_script" ]; then
+    echo "Removing driver installation files: ${init_script}"
+    /sbin/chkconfig --del ${module}
+    rm -f ${init_script}
+fi
+
+#Uninstall parameter script, if needed.
+param_script=/etc/modprobe.d/${module}.conf
+if [ -f "$param_script" ]; then
+    rm -f ${param_script}
+fi
+
+# Delete the driver kernel module.
+if [ -f ${install_file} ]; then
+    rm -f ${install_file}
+fi
+
+module=tilegxpci_p2p
+install_file=${install_dir}/${module}.ko
+if grep -q "^${module} " /proc/modules; then
+    echo "Unloading old driver: ${module}.ko"
+    /sbin/rmmod ${module}
+fi
+
+# Uninstall init script, if needed.
+init_script=/etc/init.d/${module}
+if [ -f "$init_script" ]; then
+    echo "Removing driver installation files: ${init_script}"
+    /sbin/chkconfig --del ${module}
+    rm -f ${init_script}
+fi
+
+#Uninstall parameter script, if needed.
+param_script=/etc/modprobe.d/${module}.conf
+if [ -f "$param_script" ]; then
+    rm -f ${param_script}
+fi
+
+# Delete the driver kernel module.
+if [ -f ${install_file} ]; then
+    rm -f ${install_file}
+fi
+
+module=tilegxpci_sdnic
+install_file=${install_dir}/${module}.ko
+if grep -q "^${module} " /proc/modules; then
+    echo "Unloading old driver: ${module}.ko"
+    /sbin/rmmod ${module}
+fi
+
+# Uninstall init script, if needed.
+init_script=/etc/init.d/${module}
+if [ -f "$init_script" ]; then
+    echo "Removing driver installation files: ${init_script}"
+    /sbin/chkconfig --del ${module}
+    rm -f ${init_script}
+fi
+
+#Uninstall parameter script, if needed.
+param_script=/etc/modprobe.d/${module}.conf
+if [ -f "$param_script" ]; then
+    rm -f ${param_script}
+fi
+
+# Delete the driver kernel module.
+if [ -f ${install_file} ]; then
+    rm -f ${install_file}
+fi
+
+/sbin/depmod
+
+# Delete any device nodes that are still around.
+rm -rf /dev/tilegxpci*
+
+# Note if an old driver is still running so the user knows to reboot.
+module=tilegxpci
+if grep -q "^${module} " /proc/modules; then
+    echo "Old driver still loaded; removal requires reboot."
+fi
+
+module=tilegxpci_nic
+if grep -q "^${module} " /proc/modules; then
+    echo "Old driver still loaded; removal requires reboot."
+fi
+
+module=tilegxpci_p2p
+if grep -q "^${module} " /proc/modules; then
+    echo "Old driver still loaded; removal requires reboot."
+fi
+
+module=tilegxpci_sdnic
+if grep -q "^${module} " /proc/modules; then
+    echo "Old driver still loaded; Reboot or disable netdev_ctrl"
+fi

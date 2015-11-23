@@ -1,0 +1,5 @@
+# Copyright 2014 Tilera Corporation. All Rights Reserved.
+#
+# Put all the device files for each tileusb device in their own subdirectory.
+#
+KERNEL=="tileusb*-*", PROGRAM=="/bin/sh -c 'var=%k; echo $${var%%-*} $${var##*-}'", NAME="%c{1}/%c{2}", MODE="0666"

@@ -1,0 +1,198 @@
+#!/bin/bash
+#
+# Install the 'tilegxpci' or 'tilegxpci_nic' or 'tilegxpci_p2p' driver,
+# so it will automatically load at startup.
+#
+# This script will install the driver for the currently running kernel;
+# if the kernel changes at a later date a new install must be performed.
+#
+# Copyright 2014 Tilera Corporation. All Rights Reserved.
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+
+# Figure out the SDK path and driver version.
+path="`echo $0 | sed 's,//*,/,g'`"
+module_dir=`echo $path | sed 's,/tilepci-install,,'`
+kernel=`uname -r`
+machine=`uname -m`
+
+nic_module=tilegxpci_nic
+p2p_module=tilegxpci_p2p
+def_module=tilegxpci
+sdnic_module=tilegxpci_sdnic
+
+case $1 in
+netlib)
+    module=${nic_module}
+;;
+p2p)
+    module=${p2p_module}
+;;
+sdnic)
+    module=${sdnic_module}
+;;
+*)
+    module=${def_module}
+;;
+esac
+
+# For CentOS 5 and before the kernel version did not include the
+# architecture, so we tagged the directory with it explicitly.
+case ${kernel} in
+*${machine}) subdir=${kernel} ;;
+*) subdir=${kernel}-${machine} ;;
+esac
+
+module_file=${module_dir}/${subdir}/${module}.ko
+if [ ! -f "$module_file" ]; then
+    echo "Cannot find '$module_file'." 1>&2
+    echo "A pre-compiled kernel module is not available for your kernel." 1>&2
+    echo "Please run 'tilepci-compile' to build the driver from source." 1>&2
+    exit 127
+fi
+
+# Check to see if we're running as root.
+if [ "$(id -u)" != "0" ]; then
+   echo "This script must be run as root." 1>&2
+   exit 1
+fi
+
+# Uninstall old driver.
+if grep -q "^${def_module} " /proc/modules; then
+    ${module_dir}/tilepci-uninstall
+fi
+if grep -q "^${nic_module} " /proc/modules; then
+    ${module_dir}/tilepci-uninstall
+fi
+if grep -q "^${p2p_module} " /proc/modules; then
+    ${module_dir}/tilepci-uninstall
+fi
+if grep -q "^${sdnic_module} " /proc/modules; then
+    ${module_dir}/tilepci-uninstall
+fi
+
+# Copy the driver into kernel modules tree.
+install_dir=/lib/modules/${kernel}/kernel/drivers/tile
+install_file=${install_dir}/${module}.ko
+echo "Copying files: ${install_file}"
+mkdir -p ${install_dir}
+cp ${module_file} ${install_file}
+
+# Run depmod so that modprobe will find the newly installed module.
+/sbin/depmod
+
+# Install our init script and get it into the various "/etc/rcN.d" dirs.
+init_script=/etc/init.d/${module}
+cp ${module_dir}/${module}.init ${init_script}
+/sbin/chkconfig --add ${module}
+
+# If the module is loaded in the current kernel, then uninstall couldn't
+# remove it or we can't figure out what version it is.  Let the user know
+# they need to reboot.
+
+# Add a special case of sdnic to print custom message.
+if grep -q "^${sdnic_module} " /proc/modules; then
+    echo "Old driver is still loaded, please reboot or disable netdev_ctrl."
+    exit 0
+fi
+
+if grep -q "^${module} " /proc/modules; then
+    echo "Old driver is still loaded, please reboot to load new driver."
+    exit 0
+fi
+
+# Install our kernel module parameters and get it into the various
+# "/etc/modprobe.d" dirs.
+param_script=/etc/modprobe.d/${module}.conf
+if [ -f "$param_script" ]; then
+    rm -f ${param_script}
+fi
+
+# Function to check the user defined parameters.
+# Host NIC parameters: nic_ports to specify the number of NIC ports,
+# nic_tx_queues to specify the number of Tx queues per NIC port, nic_rx_queues
+# to specify the number of Rx queues per NIC port.
+# Reference: nic_ports=4 nic_tx_queues=1 nic_rx_queues=1.
+# Host PQ parameters: pq_h2t_queues to specify the number of PQ H2T queues,
+# pq_t2h_queues to specify the number of PQ T2H queues.
+# Reference: pq_h2t_queues=8 pq_t2h_queues=8.
+# If the input parameters are illegal, default values will be used instead.
+function chk_params() {
+    nic_param_flag=0
+    pq_param_flag=0
+    nic_ports=4
+    nic_tx_queues=1
+    nic_rx_queues=1
+    pq_h2t_queues=8
+    pq_t2h_queues=8
+    while [ $# -gt 0 ]; do
+        if [ `echo $1 | sed -n '/nic_ports=/p'` ]; then
+            nic_ports=`echo $1 | sed 's/nic_ports=//g'`
+            nic_param_flag=1
+        fi
+        if [ `echo $1 | sed -n '/nic_tx_queues=/p'` ]; then
+            nic_tx_queues=`echo $1 | sed 's/nic_tx_queues=//g'`
+        fi
+        if [ `echo $1 | sed -n '/nic_rx_queues=/p'` ]; then
+            nic_rx_queues=`echo $1 | sed 's/nic_rx_queues=//g'`
+        fi
+        if [ `echo $1 | sed -n '/pq_h2t_queues=/p'` ]; then
+            pq_h2t_queues=`echo $1 | sed 's/pq_h2t_queues=//g'`
+            pq_param_flag=1
+        fi
+        if [ `echo $1 | sed -n '/pq_t2h_queues=/p'` ]; then
+            pq_t2h_queues=`echo $1 | sed 's/pq_t2h_queues=//g'`
+        fi
+        shift
+    done
+    if [ $nic_param_flag -gt 0 ]; then
+        nic_queues=$nic_tx_queues
+        if [ $nic_rx_queues -gt $nic_tx_queues ]; then
+            nic_queues=$nic_rx_queues
+        fi
+        let nic_queues_total=$nic_queues*$nic_ports
+        if [ $nic_queues_total -gt 32 ]; then
+            echo "Illegal host NIC params, default conf will be used instead:"
+            echo "nic_ports=4, nic_tx_queues=1, nic_rx_queues=1"
+        fi
+    fi
+    if [ $pq_param_flag -gt 0 ]; then
+        let pq_queues_total=$pq_h2t_queues+$pq_t2h_queues
+        if [ $pq_queues_total -gt 16 ]; then
+            echo "Illegal host PQ params, default conf will be used instead:"
+            echo "pq_h2t_queues=8, pq_t2h_queues=8"
+        fi
+    fi
+}
+
+# Automatically start the driver.
+case $1 in
+netlib)
+    shift 1
+    echo "options ${module} $*" > ${param_script}
+    chk_params $*
+;;
+p2p)
+    shift 1
+    echo "options ${module} $*" > ${param_script}
+    chk_params $*
+;;
+sdnic)
+    shift 1
+    echo "options ${module} $*" > ${param_script}
+    chk_params $*
+;;
+*)
+    echo "options ${module} $*" > ${param_script}
+    chk_params $*
+;;
+esac
+${init_script} start

@@ -1,0 +1,188 @@
+#!/bin/bash
+#
+# tilepci    Install the 'tilegxpci_sdnic' kernel driver and device files.
+#
+#
+# chkconfig: 2345 09 02
+# description: The tilegxpci kernel driver and /dev entry creation scripts.
+#
+# Copyright 2014 Tilera Corporation. All Rights Reserved.
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+module=tilegxpci_sdnic
+param_script=/etc/modprobe.d/${module}.conf
+
+start() {
+
+    version=`/sbin/modinfo -F version ${module}`
+    echo -n $"Loading driver version $version: "
+    /sbin/modprobe -C ${param_script} ${module}
+
+    # Retrieve major numbers for each board.
+    major_nums=`cat /proc/driver/tilegxpci_boards`
+    if [ -z "${major_nums}" ]; then
+	echo "Failed to probe device; is PCIE card installed?" 1>&2
+	return 1
+    fi
+
+    # Add /dev entries for each device.
+    echo -n "Creating device files: "
+    for major in $major_nums ; do
+	    devdir=/dev/tilegxpci_${major}
+	    rm -rf $devdir
+
+	    umask ugo=rx
+	    mkdir $devdir
+	    mkdir $devdir/h2t
+	    mkdir $devdir/t2h
+	    mkdir $devdir/packet_queue
+	    mkdir $devdir/packet_queue/h2t
+	    mkdir $devdir/packet_queue/t2h
+	    mkdir $devdir/raw_dma
+	    mkdir $devdir/raw_dma/h2t
+	    mkdir $devdir/raw_dma/t2h
+
+	    umask ugo=rw
+	    name=0
+	    while [ $name -lt 8 ]; do
+		mknod $devdir/packet_queue/h2t/${name} c ${major} $((16 + ${name}))
+		name=$((name + 1))
+	    done
+
+	    name=0
+	    while [ $name -lt 8 ]; do
+		mknod $devdir/packet_queue/t2h/${name} c ${major} $((32 + ${name}))
+		name=$((name + 1))
+	    done
+
+	    name=0
+	    while [ $name -lt 4 ]; do
+		mknod $devdir/${name} c ${major} $((64 + ${name}))
+		name=$((name + 1))
+	    done
+
+	    name=0
+	    while [ $name -lt 2 ]; do
+		mknod $devdir/h2t/${name} c ${major} $((68 + ${name}))
+		name=$((name + 1))
+	    done
+
+	    name=0
+	    while [ $name -lt 2 ]; do
+		mknod $devdir/t2h/${name} c ${major} $((70 + ${name}))
+		name=$((name + 1))
+	    done
+
+	    name=0
+	    while [ $name -lt 1 ]; do
+		mknod $devdir/raw_dma/h2t/${name} c ${major} $((72 + ${name}))
+		name=$((name + 1))
+	    done
+
+	    name=0
+	    while [ $name -lt 1 ]; do
+		mknod $devdir/raw_dma/t2h/${name} c ${major} $((88 + ${name}))
+		name=$((name + 1))
+	    done
+
+	    umask ugo=w
+	    mknod $devdir/boot c ${major} 1
+	    mknod $devdir/lock c ${major} 2
+
+	    umask ugo=r
+	    mknod $devdir/info c ${major} 4
+
+	    umask ugo=rw
+	    mknod $devdir/rshim c ${major} 5
+
+	    umask ugo=rw
+	    mknod $devdir/barmem c ${major} 3
+
+	    # Change group on top level files/directories.
+	    # ISSUE: Why not on files in subdirs (h2t, t2h)?
+	    chgrp users $devdir/*
+
+	    # Apply "chmod 666" to "serial" devices.
+	    conf=/etc/tilegxpci_${major}.conf
+	    if [ -f "$conf" ]; then
+		serial=`sed -n -e 's/^serial *= *//p' $conf`
+		if [ -c "$serial" ]; then
+		    chmod 666 "$serial"
+		    # Create a "serial" symlink (with group "root")
+		    # for use by old MDEs.
+		    ln -s "$serial" $devdir/serial
+		elif [ -n "$serial" ]; then
+		    echo "Serial device '$serial' from config file "
+		    echo "'$conf' does not exist."
+		    return 1
+		fi
+	    fi
+    done
+
+    # Create symlinks /dev/tilegxpciN[-linkM] to /dev/tilegxpci_<major #>.
+    for major in $major_nums ; do
+	devdir=/dev/tilegxpci_${major}
+	board_index=`grep BOARD_INDEX $devdir/info | awk '{print $2}'`
+	port_index=`grep PORT_INDEX $devdir/info | awk '{print $2}'`
+	if [ $port_index -eq 0 ]; then
+	    link=/dev/tilegxpci${board_index}
+	else
+	    link=/dev/tilegxpci${board_index}-link${port_index}
+	fi
+	ln -s $devdir $link
+    done
+    echo
+
+# SDNIC-NIC does not support booting as firmware. Disable this.
+#    boot_script=/lib/firmware/tilegx/tilegxpci_nic.boot
+#    if [ -f "$boot_script" ]; then
+#        echo -n "Booting TILEncore-Gx as NIC..."
+#        sh ${boot_script}
+#        sleep 10
+#        echo "Done"
+#    fi
+
+    touch /var/lock/subsys/tilegxpci
+    return 0
+}
+
+stop() {
+
+    rm -f /var/lock/subsys/tilegxpci
+
+    echo -n $"Removing device files: "
+    rm -rf /dev/tilegxpci*
+    nic_module=tilegxpci_nic
+    /sbin/rmmod ${nic_module} 2>/dev/null
+    p2p_module=tilegxpci_p2p
+    /sbin/rmmod ${p2p_module} 2>/dev/null
+    def_module=tilegxpci
+    /sbin/rmmod ${def_module} 2>/dev/null
+    echo
+
+    return 0
+}
+
+case "$1" in
+    start)
+	start
+	;;
+    stop)
+	stop
+	;;
+    *)
+	echo $"Usage: $0 {start|stop}"
+	exit 1
+esac
+
+exit $?
+
