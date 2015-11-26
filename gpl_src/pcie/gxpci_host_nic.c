@@ -36,6 +36,7 @@
 #endif
 #include <linux/prefetch.h>
 #include <linux/delay.h>
+#include <linux/wireless.h> // for SIOCGIWNAME
 
 #include <stdbool.h>
 
@@ -2189,7 +2190,12 @@ static void gxpci_set_rx_mode(struct net_device *netdev)
 
 static int gxpci_ioctl(struct net_device *netdev, struct ifreq *req, int cmd)
 {
-	return 0;
+	switch(cmd) {
+	case SIOCGIWNAME:
+		return -EOPNOTSUPP;
+	default:
+		return 0;
+	}
 }
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,31)
